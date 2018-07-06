@@ -1,3 +1,6 @@
-language: node_js
-node_js:
-  - "8"
+language: java
+jdk:
+    - oraclejdk8
+node_js: "8.10"
+install: "npm install && wget https://s3-us-west-2.amazonaws.com/dynamodb-local/dynamodb_local_latest.zip && unzip dynamodb_local_latest.zip"
+script: "java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb & sleep 15 && npm test && npm start"
