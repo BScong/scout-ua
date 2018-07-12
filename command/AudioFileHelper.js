@@ -7,11 +7,12 @@ const logger = require('../logger');
 const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
 
 class CommandHelper {
-  async getAudioFileLocation(articleId, summaryOnly) {
+  async getAudioFileLocation(articleId, summaryOnly, speed) {
     // first check if we have this file in the DB
     let fileUrl = await database.getAudioFileLocation(
       articleId,
-      summaryOnly ? 'summary' : 'full'
+      summaryOnly ? 'summary' : 'full',
+      speed
     );
 
     // then see if that file still exists at s3
@@ -36,10 +37,11 @@ class CommandHelper {
     return fileUrl;
   }
 
-  async storeAudioFileLocation(articleId, summaryOnly, location) {
+  async storeAudioFileLocation(articleId, summaryOnly, speed, location) {
     await database.storeAudioFileLocation(
       articleId,
       summaryOnly ? 'summary' : 'full',
+      speed,
       location
     );
   }

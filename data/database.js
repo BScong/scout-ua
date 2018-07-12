@@ -37,39 +37,35 @@ class Database {
     }
   }
 
-  async getAudioFileLocation(articleId, audioType) {
-    logger.info(`getAudioFileLocation for ${articleId}/${audioType}`);
-    const fileLocation = await AudioFileLocation.get({ item_id: articleId });
+  async getAudioFileLocation(articleId, audioType, speed) {
+    logger.info(`getAudioFileLocation for ${articleId}/${audioType}:${speed}`);
+    const fileLocation = await AudioFileLocation.get({
+      item_id: articleId,
+      type: audioType + ':' + speed
+    });
     if (fileLocation) {
-      if (audioType === 'full' && fileLocation.full_audio_location) {
-        return fileLocation.full_audio_location;
-      } else if (
-        audioType === 'summary' &&
-        fileLocation.summary_audio_location
-      ) {
-        return fileLocation.summary_audio_location;
-      }
+      return fileLocation.location;
     }
     return '';
   }
 
-  async storeAudioFileLocation(articleId, audioType, location) {
+  async storeAudioFileLocation(articleId, audioType, speed, location) {
     logger.info(
-      `storeAudioFileLocation for ${articleId}/${audioType}: ${location}`
+      `storeAudioFileLocation for ${articleId}/${audioType}:${speed} ` +
+        `at ${location}`
     );
-    let fileLocation = await AudioFileLocation.get({ item_id: articleId });
+    let fileLocation = await AudioFileLocation.get({
+      item_id: articleId,
+      type: audioType + ':' + speed
+    });
     if (!fileLocation) {
       fileLocation = new AudioFileLocation({
-        item_id: articleId
+        item_id: articleId,
+        type: audioType + ':' + speed
       });
     }
-    if (audioType === 'full') {
-      fileLocation.full_audio_location = location;
-      fileLocation.full_audio_date = Date.now();
-    } else if (audioType === 'summary') {
-      fileLocation.summary_audio_location = location;
-      fileLocation.summary_audio_date = Date.now();
-    }
+    fileLocation.location = location;
+    fileLocation.date = Date.now();
     await fileLocation.save();
   }
 

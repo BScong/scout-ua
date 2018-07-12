@@ -97,7 +97,8 @@ router.post('/intent', VerifyToken, async function(req, res) {
           req.body.userid,
           req.body.searchTerms ? req.body.searchTerms : req.body.search_terms,
           req.body.cmd === 'SearchAndSummarizeArticle',
-          req.body.extendedData == true || req.body.extended_data == true
+          req.body.extendedData == true || req.body.extended_data == true,
+          req.body.speed
         );
         break;
       case 'ScoutMyPocket':
@@ -106,7 +107,8 @@ router.post('/intent', VerifyToken, async function(req, res) {
           'list',
           'given_url',
           'given_title',
-          res
+          res,
+          req.body.speed
         );
         break;
       case 'Archive':
@@ -131,7 +133,8 @@ router.post('/article', VerifyToken, async function(req, res) {
     const result = await processArticleRequest(
       req,
       false,
-      req.body.extendedData == true || req.body.extended_data == true
+      req.body.extendedData == true || req.body.extended_data == true,
+      req.body.speed
     );
     const astat = await astatHelper.getArticleStatus(
       req.body.userid,
@@ -158,7 +161,8 @@ router.post('/summary', VerifyToken, async function(req, res) {
     const result = await processArticleRequest(
       req,
       true,
-      req.body.extendedData == true || req.body.extended_data == true
+      req.body.extendedData == true || req.body.extended_data == true,
+      req.body.speed
     );
     res.status(200).send(JSON.stringify(result));
   } catch (reason) {
@@ -201,7 +205,8 @@ function logMetric(cmd, userid, agent) {
   }
 }
 
-async function processArticleRequest(req, summaryOnly, extendedData) {
+async function processArticleRequest(req, summaryOnly, extendedData, speed) {
+  let rate = speed || process.env.PROSODY_RATE || 'medium';
   const getBody = await buildPocketRequestBody(req.body.userid);
   let result = await searchForPocketArticle(
     getBody,
@@ -215,7 +220,8 @@ async function processArticleRequest(req, summaryOnly, extendedData) {
     // we have a matching pocket item. do we already have the audio file?
     audioUrl = await audioHelper.getAudioFileLocation(
       result.item_id,
-      summaryOnly
+      summaryOnly,
+      rate
     );
   } else {
     logger.info('error:  no result returned from searchForPocketArticle');
@@ -225,15 +231,16 @@ async function processArticleRequest(req, summaryOnly, extendedData) {
   if (!audioUrl) {
     logger.info('Did not find the audio URL in DB: ' + result.item_id);
     if (summaryOnly) {
-      audioUrl = await buildSummaryAudioFromUrl(req.body.url);
+      audioUrl = await buildSummaryAudioFromUrl(req.body.url, rate);
     } else {
-      audioUrl = await buildAudioFromUrl(req.body.url);
+      audioUrl = await buildAudioFromUrl(req.body.url, rate);
     }
 
     if (result) {
       await audioHelper.storeAudioFileLocation(
         result.item_id,
         summaryOnly,
+        rate,
         audioUrl
       );
     }
@@ -244,6 +251,7 @@ async function processArticleRequest(req, summaryOnly, extendedData) {
   } else {
     result = { url: audioUrl };
   }
+  result.audio_speed = rate;
   logger.debug('result.url is: ' + result.url);
 
   // Initially set offset to 0 (overwrite later if necessary)
@@ -252,7 +260,15 @@ async function processArticleRequest(req, summaryOnly, extendedData) {
   return result;
 }
 
-async function scoutSummaries(userid, jsonBodyAttr, urlAttr, titleAttr, res) {
+async function scoutSummaries(
+  userid,
+  jsonBodyAttr,
+  urlAttr,
+  titleAttr,
+  res,
+  speed
+) {
+  let rate = speed || process.env.PROSODY_RATE || 'medium';
   // Gets the user's Pocket titles and summarizes first three.
   const getBody = await buildPocketRequestBody(userid);
   getBody.count = '3';
@@ -306,11 +322,13 @@ async function scoutSummaries(userid, jsonBodyAttr, urlAttr, titleAttr, res) {
             });
             logger.debug('Text response is: ' + textResponse);
             logger.debug('Time to get summaries: ' + Date.now());
-            return buildAudioFromText(textResponse);
+            return buildAudioFromText(textResponse, rate);
           })
           .then(function(url) {
             logger.debug('Time to buildAudioFromText ' + Date.now());
-            res.status(200).send(JSON.stringify({ url: url }));
+            res
+              .status(200)
+              .send(JSON.stringify({ url: url, audio_speed: rate }));
           })
           .catch(function(err) {
             res
@@ -511,9 +529,11 @@ async function searchAndPlayArticle(
   pocketuserid,
   searchTerm,
   summaryOnly,
-  extendedData
+  extendedData,
+  speed
 ) {
   try {
+    let rate = speed || process.env.PROSODY_RATE || 'medium';
     logger.info('Search term is: ' + searchTerm);
     const titles = await getTitlesFromPocket(pocketuserid, extendedData);
     const articleInfo = await findBestScoringTitle(searchTerm, titles.articles);
@@ -524,24 +544,30 @@ async function searchAndPlayArticle(
       // do we already have the audio file?
       let audioUrl = await audioHelper.getAudioFileLocation(
         articleInfo.item_id,
-        summaryOnly
+        summaryOnly,
+        rate
       );
 
       // if we didn't find it in the DB, create the audio file
       if (!audioUrl) {
         if (summaryOnly) {
-          audioUrl = await buildSummaryAudioFromUrl(articleInfo.resolved_url);
+          audioUrl = await buildSummaryAudioFromUrl(
+            articleInfo.resolved_url,
+            rate
+          );
         } else {
-          audioUrl = await buildAudioFromUrl(articleInfo.resolved_url);
+          audioUrl = await buildAudioFromUrl(articleInfo.resolved_url, rate);
         }
 
         await audioHelper.storeAudioFileLocation(
           articleInfo.item_id,
           summaryOnly,
+          rate,
           audioUrl
         );
       }
       articleInfo.url = audioUrl;
+      articleInfo.audio_speed = rate;
 
       articleInfo.offset_ms = 0;
       if (!summaryOnly) {
@@ -572,7 +598,7 @@ async function searchAndPlayArticle(
   }
 }
 
-async function buildAudioFromUrl(url) {
+async function buildAudioFromUrl(url, speed) {
   articleOptions.formData = {
     consumer_key: process.env.POCKET_KEY,
     url,
@@ -584,10 +610,10 @@ async function buildAudioFromUrl(url) {
   logger.info('Getting article from pocket API: ' + url);
   const article = JSON.parse(await rp(articleOptions));
   logger.info('Returned article from pocket API: ' + article.title);
-  return buildAudioFromText(`${article.title}. ${article.article}`);
+  return buildAudioFromText(`${article.title}. ${article.article}`, speed);
 }
 
-async function buildSummaryAudioFromUrl(url) {
+async function buildSummaryAudioFromUrl(url, speed) {
   summaryOptions.uri = summaryLink + url;
   const sumResults = JSON.parse(await rp(summaryOptions));
   if (sumResults.sm_api_character_count) {
@@ -595,7 +621,8 @@ async function buildSummaryAudioFromUrl(url) {
       texttools.buildSummaryText(
         sumResults.sm_api_title,
         sumResults.sm_api_content
-      )
+      ),
+      speed
     );
     return summaryURL;
   } else {
@@ -603,10 +630,10 @@ async function buildSummaryAudioFromUrl(url) {
   }
 }
 
-async function buildAudioFromText(textString) {
+async function buildAudioFromText(textString, speed) {
   const cleanText = texttools.cleanText(textString);
   const chunkText = texttools.chunkText(cleanText);
-  return polly_tts.getSpeechSynthUrl(chunkText);
+  return polly_tts.getSpeechSynthUrl(chunkText, speed);
 }
 
 function findBestScoringTitle(searchPhrase, articleMetadataArray) {
